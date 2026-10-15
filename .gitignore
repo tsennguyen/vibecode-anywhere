@@ -1,0 +1,7 @@
+# Your personal config and generated files never go to GitHub.
+config/hub.conf
+config/rules.extra.md
+.rendered/
+vibecode-out/
+*.enc
+.DS_Store
