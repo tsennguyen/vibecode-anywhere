@@ -4,6 +4,13 @@ Dùng khi agent trên điện thoại không làm việc được nữa. Chuẩn
 
 Thay `~/vibecode-anywhere` bằng chỗ anh/chị clone repo, `my-vps` bằng `HOST_NAME`, `~/code` bằng `HOST_ROOT`.
 
+
+> **Host Windows:** SSH vào sẽ mở Git Bash (do `bootstrap.ps1` cài), các lệnh dưới gõ được y nguyên; hoặc dùng PowerShell `.\vibe.ps1 doctor`. Không có tmux: Claude chạy trong cửa sổ thu nhỏ, khởi động lại bằng `~/vibecode-anywhere/remote.sh start claude`. Thay `free`/`ps` ở §3 bằng `~/vibecode-anywhere/doctor.sh`. Mất kết nối sau khi mất điện: kiểm tra Autologon và BIOS "Restore on AC power loss".
+>
+> **Host macOS:** giống Linux (có tmux qua Homebrew). Sau khi reboot mà agent không lên: kiểm tra đã bật **tự đăng nhập** chưa (System Settings → Users & Groups). Codex: mở lại app ChatGPT.
+>
+> **Máy ở nhà:** SSH qua Tailscale (`tailscale ip -4` để lấy địa chỉ); router hoặc điện ở nhà có vấn đề thì phải nhờ người ở nhà bật lại.
+
 ## 0. Không biết lỗi gì → chạy cái này trước
 ```bash
 ~/vibecode-anywhere/doctor.sh

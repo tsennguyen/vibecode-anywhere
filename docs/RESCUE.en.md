@@ -4,6 +4,13 @@ Use this when the agent on your phone stops working. Have these on the phone in 
 
 Replace `~/vibecode-anywhere` with where you cloned the kit, `my-vps` with your `HOST_NAME`, and `~/code` with your `HOST_ROOT`.
 
+
+> **Windows host:** SSH lands in Git Bash (set up by `bootstrap.ps1`), so the commands below work as written; or use PowerShell `.\vibe.ps1 doctor`. No tmux there: Claude runs in a minimized window, so restart it with `~/vibecode-anywhere/remote.sh start claude`. For §3, use `~/vibecode-anywhere/doctor.sh` instead of `free`/`ps`. If the machine is unreachable after a power cut, check Autologon and the BIOS "Restore on AC power loss" setting.
+>
+> **macOS host:** same as Linux (tmux comes from Homebrew). If the agents don't come back after a reboot, check that **automatic login** is on (System Settings → Users & Groups). Codex: reopen the ChatGPT app.
+>
+> **Home machine:** SSH over Tailscale (`tailscale ip -4` shows the address). If the router or home power is down, someone at home has to bring it back.
+
 ## §0. No idea what's wrong → run this first
 ```bash
 ~/vibecode-anywhere/doctor.sh

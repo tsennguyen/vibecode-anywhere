@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# vibecode-anywhere — sync.sh  (runs on the HOST: Ubuntu/Debian)
+# vibecode-anywhere — sync.sh  (runs on the HOST: Linux, macOS or Windows/Git Bash)
 # Restore a snapshot made by pack.sh: clone missing repos/worktrees, put every repo on the snapshot's
 # branch + commit, re-apply uncommitted work, drop secrets/config in place, then render agent rules.
 # Safe to re-run: local changes are stashed first; a branch that would lose commits is backed up.

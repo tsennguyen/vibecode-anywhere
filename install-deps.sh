@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# vibecode-anywhere — install-deps.sh (HOST, after sync.sh): install every repo's dependencies,
+# vibecode-anywhere — install-deps.sh (HOST — Linux, macOS or Windows/Git Bash — after sync.sh): install every repo's dependencies,
 # pre-pull Docker images, optionally Playwright Chromium, then run SMOKE_TESTS.
 #
 #   ./install-deps.sh          main repos only
@@ -27,7 +27,10 @@ detect_one() { # $1 = folder containing a manifest; prints commands
   elif [ -f "$d/bun.lock" ] || [ -f "$d/bun.lockb" ]; then echo "bun install"
   fi
   if   [ -f "$d/uv.lock" ];           then echo "uv sync"
-  elif [ -f "$d/requirements.txt" ];  then echo "python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt"
+  elif [ -f "$d/requirements.txt" ]; then
+    if have uv; then echo "uv venv -q && uv pip install -q -r requirements.txt"
+    elif [ "$VA_OS" = windows ]; then echo "python -m venv .venv && .venv/Scripts/python -m pip install -q -r requirements.txt"
+    else echo "python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt"; fi
   fi
   [ -x "$d/mvnw" ]      && echo "./mvnw -q -B -DskipTests dependency:go-offline"
   [ -x "$d/gradlew" ]   && echo "./gradlew -q dependencies"
@@ -73,7 +76,8 @@ if [ "$WANT_PLAYWRIGHT" = 1 ]; then
   for e in ${REPOS[@]+"${REPOS[@]}"}; do
     grep -qs '"@playwright/test"\|"playwright"' "$HOST_ROOT/$(f1 "$e")/package.json" && { pw_repo="$HOST_ROOT/$(f1 "$e")"; break; }
   done
-  if [ -n "$pw_repo" ]; then run "playwright chromium" bash -c "cd '$pw_repo' && npx playwright install --with-deps chromium"
+  pw_flags="--with-deps"; [ "$VA_OS" = linux ] || pw_flags=""   # system libraries only matter on Linux
+  if [ -n "$pw_repo" ]; then run "playwright chromium" bash -c "cd '$pw_repo' && npx playwright install $pw_flags chromium"
   else echo "  --    no repo uses Playwright"; fi
 fi
 
