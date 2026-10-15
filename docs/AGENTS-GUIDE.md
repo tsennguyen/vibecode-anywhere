@@ -6,8 +6,11 @@ Checked against official docs in **October 2026**. These products change fast: i
 |---|---|---|---|
 | Phone side | https://antigravity.google.com (web app, *Add to Home Screen*) | **Claude** app → *Code*, or https://claude.ai/code | **ChatGPT** app → *Codex* |
 | Account | Google account | **Pro / Max / Team / Enterprise** subscription. API keys do **not** work for remote control | ChatGPT account (plan with Codex) |
-| How it stays online on the host | Official **OS service** (`agy remote-control start`, systemd user unit `antigravity-cli-daemon`). Survives logout and reboot | The `claude remote-control` process has to keep running → `./remote.sh start claude` runs it in tmux `claude-rc`. Optional: `./remote.sh autostart claude` (unofficial systemd unit) | Official mobile path needs the **ChatGPT desktop app (Mac/Windows)** as the host; that app can open this Linux machine as an **SSH host**. Without a desktop: SSH + tmux fallback |
-| Global rules file (linked by `render-rules.sh`) | `~/.gemini/GEMINI.md` | `~/.claude/CLAUDE.md` | `~/.codex/AGENTS.md` |
+| Stays online on a **Linux** host | Official **OS service** (`agy remote-control start` → systemd user unit `antigravity-cli-daemon`), survives logout and reboot | `claude remote-control` must keep running → tmux `claude-rc`; `remote.sh autostart claude` adds a systemd user unit | Needs a Mac/Windows **ChatGPT desktop app** elsewhere that opens this host over **SSH**; otherwise SSH + tmux |
+| …on a **macOS** host | `agy remote-control start` registers with the OS; turn on **automatic login** | tmux + LaunchAgent (`remote.sh autostart claude`) | **ChatGPT desktop app on this Mac = official remote host** |
+| …on a **Windows** host | `agy remote-control start` registers with Windows; turn on **automatic sign-in** | minimized window + Scheduled Task at sign-in (`remote.sh autostart claude`) | **ChatGPT desktop app on this PC = official remote host** |
+| Install | Linux/macOS: `curl -fsSL https://antigravity.google/cli/install.sh \| bash` · Windows: `irm https://antigravity.google/cli/install.ps1 \| iex` | Linux/macOS: `curl -fsSL https://claude.ai/install.sh \| bash` · Windows: `irm https://claude.ai/install.ps1 \| iex` | `npm i -g @openai/codex` (macOS: `brew install codex`) |
+| Global rules file (placed by `render-rules.sh`; `~` = `%USERPROFILE%` on Windows) | `~/.gemini/GEMINI.md` | `~/.claude/CLAUDE.md` | `~/.codex/AGENTS.md` |
 | Sign in on a headless host | `agy` → opens a link → paste the code back → `/exit` | `claude` → `/login` → open the link → paste the code | `codex login --device-auth` → open the link → enter the code |
 | Best for | Main agent: the only one of the three with a real background service | Primary or backup; push notifications to the phone | Users who already have a Mac/Windows desktop always on, or who live in ChatGPT |
 
@@ -74,5 +77,9 @@ tmux new -As work        # on the host, from Termius
 ```
 Use SSH keys only. If the host is a PC at home behind NAT, use **Tailscale** (`TOOLS=(tailscale)`) instead of opening ports. Remote control for all three agents uses outbound HTTPS only, so no port forwarding is needed for it.
 
-## Windows / WSL2 as the host (experimental)
-The scripts target Ubuntu/Debian. On a Windows PC that stays on, install **WSL2 + Ubuntu**, enable systemd (`/etc/wsl.conf` → `[boot]` `systemd=true`, then `wsl --shutdown`), and run everything inside Ubuntu. Keep Windows from sleeping, and keep WSL running (it stops when idle unless something holds it open). Antigravity and Claude Code also run natively on Windows, but `bootstrap.sh` does not set that up.
+## Host OS notes
+Full host guide (machine kinds, per-OS setup, home-machine checklist): [HOSTS.en.md](HOSTS.en.md).
+- **Linux** (VPS, workstation, mini PC, Pi): the most hands-off. Systemd plus linger keeps Antigravity up with nobody logged in.
+- **macOS** (Mac mini…): `bootstrap.sh` sets `pmset` (never sleep, restart after power loss). Agents run in your user session, so **automatic login** is required for recovery after a reboot (unavailable while FileVault is on).
+- **Windows** (workstation, mini PC, laptop): `bootstrap.ps1` installs everything with winget and blocks automatic Windows Update reboots. Use Sysinternals **Autologon** plus BIOS "Restore on AC power loss" for unattended recovery. tmux doesn't exist on Windows, so Claude runs in a minimized window.
+- **WSL2** is an alternative on Windows if you want Linux tooling: enable systemd in `/etc/wsl.conf`. Native Windows is simpler.

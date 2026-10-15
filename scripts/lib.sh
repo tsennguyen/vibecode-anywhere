@@ -1,10 +1,23 @@
 # shellcheck shell=bash
 # vibecode-anywhere — shared helpers, sourced by every script.
-# Must stay compatible with bash 3.2 (macOS) and Git Bash (Windows): no associative arrays, no mapfile.
+# Runs on Linux, macOS (bash 3.2) and Windows (Git Bash / MSYS2): no associative arrays, no mapfile.
 # (c) 2026 Nguyễn Việt Thành — MIT License. https://github.com/tsennguyen/vibecode-anywhere
 
+VA_VERSION="2.0.0"
 VA_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PATH="$HOME/.local/bin:$PATH"
+
+case "$(uname -s)" in
+  Linux)                VA_OS=linux ;;
+  Darwin)               VA_OS=macos ;;
+  MINGW*|MSYS*|CYGWIN*) VA_OS=windows
+    _lad="$(cygpath -u "${LOCALAPPDATA:-}" 2>/dev/null)"; [ -n "$_lad" ] || _lad="$HOME/AppData/Local"
+    _apd="$(cygpath -u "${APPDATA:-}" 2>/dev/null)";     [ -n "$_apd" ] || _apd="$HOME/AppData/Roaming"
+    export PATH="$PATH:$_lad/agy/bin:$_apd/npm" ;;
+  *)                    VA_OS=other ;;
+esac
+VA_WSL=0; [ "$VA_OS" = linux ] && grep -qi microsoft /proc/version 2>/dev/null && VA_WSL=1
+[ "$VA_OS" = macos ] && [ -x /opt/homebrew/bin/brew ] && export PATH="/opt/homebrew/bin:$PATH"
 
 step() { printf '\n\033[1;36m== %s\033[0m\n' "$*"; }
 ok()   { printf '  \033[32mOK  \033[0m %s\n' "$*"; }
@@ -12,12 +25,18 @@ warn() { printf '  \033[33mWARN\033[0m %s\n' "$*"; }
 bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$*"; }
 die()  { printf '\033[31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
+# Path as the host's native tools see it: C:\Users\me\code on Windows, unchanged elsewhere.
+native_path() { if [ "$VA_OS" = windows ] && have cygpath; then cygpath -w "$1"; else printf '%s' "$1"; fi; }
+# Run a PowerShell command (Windows only).
+ps1()  { powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$*" | tr -d '\r'; }
 
 # ── defaults (config overrides) ──────────────────────────────────────────────
 OWNER_NAME="the owner"; REPLY_LANGUAGE="English"; HOST_NAME="vibecode-host"; TIMEZONE=""
+HOST_KIND="vps"; HOST_SHARED=0; SSH_SERVER="auto"
 SOURCE_ROOT="$HOME/code"; HOST_ROOT="$HOME/code"; MIRROR_PATH=""
 GIT_NAME=""; GIT_EMAIL=""; PROFILE="auto"
 AGENTS=(antigravity); STACKS=(node); NODE_VERSION="22"; JAVA_VERSION="21"; TOOLS=(gh)
+DOCKER_ON_MAC="colima"
 INSTALL_PLAYWRIGHT="auto"; DOCKER_IMAGES=()
 REPOS=(); WORKTREES=(); PUBLIC_REPOS=(); PROTECTED_BRANCHES=(main master dev develop prod production)
 EXTRAS=(); HOME_EXTRAS=(); DEP_COMMANDS=(); SMOKE_TESTS=()
@@ -32,12 +51,68 @@ done
 # shellcheck disable=SC1090
 source "$VA_CONF"
 
-# ── profile ──────────────────────────────────────────────────────────────────
+# ── system facts (portable) ──────────────────────────────────────────────────
+meminfo() { awk -v k="$1" '$1==k":" {print int($2/1024); exit}' /proc/meminfo 2>/dev/null; }
 va_ram_mb() {
-  if [ -r /proc/meminfo ]; then awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo
-  elif have sysctl && sysctl -n hw.memsize >/dev/null 2>&1; then echo $(( $(sysctl -n hw.memsize) / 1048576 ))
-  else echo 8192; fi
+  case "$VA_OS" in
+    macos) echo $(( $(sysctl -n hw.memsize) / 1048576 )) ;;
+    *)     local m; m="$(meminfo MemTotal)"; echo "${m:-8192}" ;;
+  esac
 }
+va_mem_avail_mb() {
+  case "$VA_OS" in
+    macos) vm_stat | awk -v ps="$(sysctl -n hw.pagesize)" '/Pages free|Pages inactive|Pages speculative/ {gsub("\\.","",$NF); s+=$NF} END {print int(s*ps/1048576)}' ;;
+    *)     local m; m="$(meminfo MemAvailable)"; [ -n "$m" ] || m="$(meminfo MemFree)"; echo "${m:-0}" ;;
+  esac
+}
+va_swap_mb() {
+  case "$VA_OS" in
+    macos) sysctl -n vm.swapusage | awk '{gsub("M","",$3); print int($3)}' ;;
+    *)     local m; m="$(meminfo SwapTotal)"; echo "${m:-0}" ;;
+  esac
+}
+va_cpus() {
+  case "$VA_OS" in
+    macos)   sysctl -n hw.ncpu ;;
+    windows) echo "${NUMBER_OF_PROCESSORS:-?}" ;;
+    *)       nproc 2>/dev/null || echo "?" ;;
+  esac
+}
+va_load() {
+  case "$VA_OS" in
+    macos) sysctl -n vm.loadavg | tr -d '{}' | awk '{print $1, $2, $3}' ;;
+    *)     cut -d' ' -f1-3 /proc/loadavg 2>/dev/null || echo "n/a" ;;
+  esac
+}
+# Percent used on the disk that holds HOST_ROOT (robust to an empty filesystem-name column).
+disk_pct() {
+  local d="$HOST_ROOT"; [ -d "$d" ] || d="$HOME"
+  df -P "$d" | awk 'NR==2 {for (i=1;i<=NF;i++) if ($i ~ /^[0-9]+%$/) {sub("%","",$i); print $i; exit}}'
+}
+va_top_procs() {
+  case "$VA_OS" in
+    linux)   ps -eo rss,comm --sort=-rss | awk 'NR>1 && NR<=6 {printf "       %5d MB  %s\n", $1/1024, $2}' ;;
+    macos)   ps -Ao rss,comm | sort -nr | head -5 | awk '{n=split($2,a,"/"); printf "       %5d MB  %s\n", $1/1024, a[n]}' ;;
+    windows) ps1 "Get-Process | Sort-Object WS -Descending | Select-Object -First 5 | ForEach-Object { '       {0,5} MB  {1}' -f [int](\$_.WS/1MB), \$_.ProcessName }" ;;
+  esac
+}
+# Is a process whose command line contains $1 running?
+proc_running() {
+  case "$VA_OS" in
+    windows) [ -n "$(ps1 "Get-CimInstance Win32_Process | Where-Object { \$_.CommandLine -like '*$1*' -and \$_.Name -ne 'powershell.exe' } | Select-Object -First 1 -ExpandProperty ProcessId")" ] ;;
+    *)       pgrep -f "$1" >/dev/null 2>&1 ;;
+  esac
+}
+va_os_label() {
+  case "$VA_OS" in
+    linux)   ( . /etc/os-release 2>/dev/null && printf '%s' "$PRETTY_NAME" ) || echo Linux; [ "$VA_WSL" = 1 ] && printf ' (WSL2)' ;;
+    macos)   echo "macOS $(sw_vers -productVersion 2>/dev/null)" ;;
+    windows) ps1 "(Get-CimInstance Win32_OperatingSystem).Caption" 2>/dev/null || echo Windows ;;
+    *)       uname -s ;;
+  esac
+}
+
+# ── profile ──────────────────────────────────────────────────────────────────
 VA_PROFILE="$PROFILE"
 if [ "$VA_PROFILE" = auto ]; then
   _ram="$(va_ram_mb)"
@@ -45,10 +120,22 @@ if [ "$VA_PROFILE" = auto ]; then
   elif [ "$_ram" -lt 14000 ]; then VA_PROFILE=medium
   else VA_PROFILE=large; fi
 fi
-[ -f "$VA_HOME/profiles/$VA_PROFILE.conf" ] || die "unknown PROFILE '$VA_PROFILE' (use auto, small, medium or large)"
+[ -f "$VA_HOME/profiles/$VA_PROFILE.conf" ] || die "unknown PROFILE '$VA_PROFILE' (use auto, small, medium, large or a file in profiles/)"
 # shellcheck disable=SC1090
 source "$VA_HOME/profiles/$VA_PROFILE.conf"
 case "$INSTALL_PLAYWRIGHT" in auto) WANT_PLAYWRIGHT="$PLAYWRIGHT_DEFAULT" ;; 1|yes|true) WANT_PLAYWRIGHT=1 ;; *) WANT_PLAYWRIGHT=0 ;; esac
+
+case "$HOST_KIND" in
+  vps)         HOST_KIND_LABEL="rented VPS (datacenter)" ;;
+  workstation) HOST_KIND_LABEL="workstation / desktop PC at home or office" ;;
+  minipc)      HOST_KIND_LABEL="mini PC (always on)" ;;
+  laptop)      HOST_KIND_LABEL="laptop kept plugged in (lid may be closed)" ;;
+  mac)         HOST_KIND_LABEL="Mac (mini / Studio / laptop) kept on" ;;
+  sbc)         HOST_KIND_LABEL="single-board computer (Raspberry Pi class)" ;;
+  *)           HOST_KIND_LABEL="$HOST_KIND" ;;
+esac
+# An SSH server is how you rescue the host from the phone. VPSes ship one; home machines usually don't.
+case "$SSH_SERVER" in auto) [ "$HOST_KIND" = vps ] && WANT_SSH=0 || WANT_SSH=1 ;; 1|yes|true) WANT_SSH=1 ;; *) WANT_SSH=0 ;; esac
 
 # ── list helpers ─────────────────────────────────────────────────────────────
 # Entries look like "a|b|c". f1/f2/f3 print one field (missing field = empty).
@@ -71,9 +158,6 @@ all_paths() {
   for e in ${REPOS[@]+"${REPOS[@]}"}; do f1 "$e"; echo; done
   for e in ${WORKTREES[@]+"${WORKTREES[@]}"}; do f1 "$e"; echo; done
 }
-
-# Percent of / in use (robust to an empty filesystem-name column).
-disk_pct() { df -P / | awk 'NR==2 {for (i=1;i<=NF;i++) if ($i ~ /^[0-9]+%$/) {sub("%","",$i); print $i; exit}}'; }
 
 # Never pack login tokens, whatever the config says.
 is_secret_login_file() {
