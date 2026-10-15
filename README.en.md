@@ -22,7 +22,7 @@ flowchart LR
 | `profiles/*.conf` | | `small` (≤4 GB), `medium` (~8 GB), `large` (≥16 GB): swap, RAM limits, Playwright, Docker advice |
 | `pack.sh` | main computer | Snapshot every repo + gitignored files → **one encrypted file** `~/vibecode-out/bundle.tar.gz.enc` |
 | `bootstrap.sh` | Linux / macOS host, once | Installs only what the config selects (apt or Homebrew), keeps the machine awake, enables SSH on home machines |
-| `bootstrap.ps1` | Windows host, once (Admin) | Same with winget; blocks surprise Windows Update reboots; enables OpenSSH Server |
+| `bootstrap.ps1` | Windows host, once (asks for UAC) | Same with winget; blocks surprise Windows Update reboots; enables OpenSSH Server |
 | `vibe.ps1` | Windows | Run any script from PowerShell: `.\vibe.ps1 pack`, `sync`, `install-deps`, `remote`, `doctor`, `save-all` |
 | `sync.sh` | host | Clones repos, restores branch + commit, re-applies uncommitted work, puts secrets back, renders agent rules. `--clone-only` when you have no bundle |
 | `install-deps.sh` | host | Detects lockfiles (npm/pnpm/yarn/bun/uv/pip/Maven/Gradle/Go/Cargo), installs, runs smoke tests |
@@ -87,13 +87,13 @@ gh auth login --web --git-protocol https && gh auth setup-git
 ./sync.sh && ./install-deps.sh
 ./remote.sh login && ./remote.sh start && ./doctor.sh
 ```
-**Windows host:** run this in an **Administrator** PowerShell:
+**Windows host:** use a **normal** PowerShell (not "Run as administrator"), signed in as the account the agents will run under:
 ```powershell
-winget install --id Git.Git -e
+winget install --id Git.Git -e          # then open a new PowerShell window
 git clone https://github.com/tsennguyen/vibecode-anywhere $HOME\vibecode-anywhere; cd $HOME\vibecode-anywhere
-powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1
+powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1   # asks for admin (UAC) once for the system part
 ```
-Then open a **normal** PowerShell:
+Then open a new PowerShell:
 ```powershell
 gh auth login --web --git-protocol https; gh auth setup-git
 .\vibe.ps1 sync; .\vibe.ps1 install-deps
@@ -126,6 +126,7 @@ Run `save-all.sh` on the host, then `git fetch` and check out the pushed branche
 ## Security
 - `config/hub.conf` holds no secrets and is gitignored. Secrets live only in the encrypted bundle (AES-256-CBC, PBKDF2 200k iterations, SHA-256; LibreSSL and OpenSSL 3 can read each other's bundles).
 - `pack.sh` **always skips** login token files (`auth.json`, `.credentials.json`, `oauth*`, `*token*`, SSH keys). Sign in again on the host.
+- `save-all.sh` **never commits** new files that look like secrets (`.env*`, keys, credentials…) or are listed in `EXTRAS`; in `PUBLIC_REPOS` it never commits AI files either (`AGENTS.md`, `CLAUDE.md`, `.claude/`…). `sync.sh` backs up every file it would overwrite to `~/.vibecode-backup/`.
 - Anyone with a remote-control session link can drive that session. Turn on 2FA for your Google / Claude / ChatGPT accounts.
 - Home machines: use SSH keys over Tailscale, with **no port forwarding** on your router. Automatic login means anyone with physical access gets your session, so keep the machine somewhere safe.
 

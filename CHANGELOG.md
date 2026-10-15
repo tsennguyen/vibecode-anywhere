@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.0.1 — 2026-10-15
+Security and safety fixes found in a risk review of 2.0.0.
+
+- **save-all.sh could push secrets.** New untracked files such as `.env.local` were committed and pushed, including to PUBLIC repos. Now new files that look like secrets (`.env*`, keys, credentials, `.npmrc`…) or are listed in `EXTRAS` are never committed. In `PUBLIC_REPOS`, new AI files (`AGENTS.md`, `CLAUDE.md`, `.claude/`, `.agents/`…) are never committed either. A notice tells you to add them to `.gitignore`.
+- **pack.sh** refuses to run if `hub.conf` contains something that looks like a credential (e.g. a token in a clone URL), because `hub.conf` travels unencrypted. It also skips `node_modules`/`.venv`/`.next` in untracked files and warns when the bundle exceeds 500 MB.
+- **sync.sh**:
+  - Files that would be overwritten with different content (secrets, agent config, untracked files) are first copied to `~/.vibecode-backup/<time>/`.
+  - One failing repo no longer aborts the whole sync.
+  - Uncommitted changes that don't apply cleanly are saved as a patch instead of stopping.
+  - `.git/info/exclude` is merged rather than replaced.
+  - The config inside the encrypted bundle now wins over the plaintext copy, and sync warns if the two differ.
+  - Decrypted temp files are removed before the restart.
+- **Windows-edited configs** (CRLF line endings, UTF-8 BOM from Notepad) used to break every script silently; they are now read correctly.
+- **bootstrap.ps1** runs from a normal PowerShell. It asks for UAC once for the system part, and installs agents, npm globals and rules into the user's own profile instead of an admin profile. It also copies SSH keys to `administrators_authorized_keys` (needed for admin accounts) and sets `DefaultShellCommandOption` for Git Bash.
+- **bootstrap-linux.sh**: installs `sudo` on minimal root images; falls back to Eclipse Temurin when the distro lacks the requested JDK (e.g. Debian 12 + Java 21).
+- `render-rules.sh` tells you to move personal rules into `config/rules.extra.md` when it backs up an existing global rules file. `doctor.sh` warns when git has no identity.
+- System facts default to safe numbers when a probe fails.
+
 ## 2.0.0 — 2026-10-15
 **Hosts beyond Ubuntu.** The always-on machine can now be a VPS, workstation, mini PC, laptop, Mac mini or Raspberry Pi, running Linux, macOS or Windows. VPSes stay on Ubuntu.
 

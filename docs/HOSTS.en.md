@@ -46,20 +46,20 @@ git clone https://github.com/tsennguyen/vibecode-anywhere ~/vibecode-anywhere &&
 - A closed MacBook stays awake only with power **and** an external display (Apple limitation). Leaving the lid open is simplest.
 
 ### Windows: workstation, mini PC, laptop (Windows 10 22H2+ / 11)
-Open **PowerShell (Run as Administrator)**:
+Open a **normal** PowerShell (not "Run as administrator"), signed in as the account the agents will run under:
 ```powershell
-winget install --id Git.Git -e
+winget install --id Git.Git -e          # then open a new PowerShell window
 git clone https://github.com/tsennguyen/vibecode-anywhere $HOME\vibecode-anywhere
 cd $HOME\vibecode-anywhere
 powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1
 ```
-Then, in a **normal** (not Admin) PowerShell, use `.\vibe.ps1 <command>`, e.g. `.\vibe.ps1 sync` or `.\vibe.ps1 doctor`. If you prefer Git Bash, `./sync.sh` works there too.
+The script asks for admin rights (UAC) **once**, for the system part: winget, power settings, Windows Update, OpenSSH. Agents, npm globals and rules then install as you, so they land in your own profile. Afterwards, use `.\vibe.ps1 <command>`, e.g. `.\vibe.ps1 sync` or `.\vibe.ps1 doctor`. If you prefer Git Bash, `./sync.sh` works there too.
 
 What `bootstrap.ps1` does:
 - Installs with winget only what the config selects: Git, Node LTS, uv, OpenJDK, Docker Desktop, gh, Tailscale, the agents.
 - Turns off sleep and hibernation on AC power. On a laptop, closing the lid does nothing.
 - **Blocks automatic Windows Update reboots** while you are signed in (`WINDOWS_BLOCK_AUTO_REBOOT=1`). Updates still install; the reboot waits for you.
-- Enables the **OpenSSH Server** with Git Bash as the shell, so the RESCUE commands work as written.
+- Enables the **OpenSSH Server** with Git Bash as the shell, so the RESCUE commands work as written. For admin accounts, Windows reads SSH keys from `C:\ProgramData\ssh\administrators_authorized_keys`; bootstrap copies `~\.ssh\authorized_keys` there (add your key, then re-run bootstrap).
 - Sets `git config core.longpaths true`, because `node_modules` paths often exceed 260 characters.
 
 To make everything come back after a power cut:

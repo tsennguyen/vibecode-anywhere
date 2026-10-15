@@ -46,20 +46,20 @@ git clone https://github.com/tsennguyen/vibecode-anywhere ~/vibecode-anywhere &&
 - MacBook gập nắp chỉ còn thức khi cắm sạc **và** có màn hình ngoài (giới hạn của Apple). Để mở nắp thì đơn giản nhất.
 
 ### Windows: máy trạm, mini PC, laptop (Windows 10 22H2+ / 11)
-Mở **PowerShell (Run as Administrator)**:
+Mở PowerShell **thường** (không chọn Run as administrator), đăng nhập bằng đúng tài khoản sẽ chạy agent:
 ```powershell
-winget install --id Git.Git -e
+winget install --id Git.Git -e          # xong thì mở cửa sổ PowerShell mới
 git clone https://github.com/tsennguyen/vibecode-anywhere $HOME\vibecode-anywhere
 cd $HOME\vibecode-anywhere
 powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1
 ```
-Sau đó mở PowerShell **thường** (không phải Admin) và dùng `.\vibe.ps1 <lệnh>`, ví dụ `.\vibe.ps1 sync`, `.\vibe.ps1 doctor`. Nếu quen Git Bash thì gọi thẳng `./sync.sh` cũng được.
+Script hỏi quyền Admin (UAC) **một lần** cho phần hệ thống: winget, chế độ điện, Windows Update, OpenSSH. Phần agent, npm và luật thì chạy bằng tài khoản của bạn, để mọi thứ nằm đúng trong hồ sơ người dùng của bạn. Sau đó dùng `.\vibe.ps1 <lệnh>`, ví dụ `.\vibe.ps1 sync`, `.\vibe.ps1 doctor`. Nếu quen Git Bash thì gọi thẳng `./sync.sh` cũng được.
 
 `bootstrap.ps1` làm những việc sau:
 - Cài bằng winget: Git, Node LTS, uv, OpenJDK, Docker Desktop, gh, Tailscale, agent... theo đúng những gì config chọn.
 - Không cho máy ngủ hay ngủ đông khi cắm điện; với laptop thì gập máy không làm gì.
 - **Chặn Windows Update tự khởi động lại** khi đang đăng nhập (`WINDOWS_BLOCK_AUTO_REBOOT=1`). Bản cập nhật vẫn được cài, chỉ chờ bạn tự khởi động lại.
-- Bật **OpenSSH Server**, shell mặc định là Git Bash, để các lệnh trong RESCUE gõ được y nguyên.
+- Bật **OpenSSH Server**, shell mặc định là Git Bash, để các lệnh trong RESCUE gõ được y nguyên. Tài khoản Admin thì Windows đọc key SSH ở `C:\ProgramData\ssh\administrators_authorized_keys`: bootstrap tự chép từ `~\.ssh\authorized_keys` sang (thêm key rồi chạy lại bootstrap).
 - `git config core.longpaths true`, vì đường dẫn trong `node_modules` hay vượt 260 ký tự.
 
 Để mọi thứ tự chạy lại sau khi mất điện:

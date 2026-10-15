@@ -92,8 +92,9 @@ personal rules, config/rules.extra.md. Then give me the exact next steps for MY 
       Linux/macOS: git clone the kit to ~/vibecode-anywhere; copy vibecode-out to ~ ; ./bootstrap.sh ;
         new terminal ; gh auth login --web --git-protocol https && gh auth setup-git ; ./sync.sh ;
         ./install-deps.sh ; ./remote.sh login ; ./remote.sh start ; ./doctor.sh
-      Windows: Admin PowerShell → winget install --id Git.Git -e ; git clone ... $HOME\vibecode-anywhere ;
-        powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1 ; then a normal PowerShell →
+      Windows (normal PowerShell, as the account the agents will use; bootstrap asks for UAC once):
+        winget install --id Git.Git -e ; new window ; git clone ... $HOME\vibecode-anywhere ;
+        powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1 ; then a new PowerShell →
         gh auth login ... ; .\vibe.ps1 sync ; .\vibe.ps1 install-deps ; .\vibe.ps1 remote login ;
         .\vibe.ps1 remote start ; .\vibe.ps1 doctor
       Home machines: the docs/HOSTS.en.md checklist + `remote autostart claude` if Claude is used.
