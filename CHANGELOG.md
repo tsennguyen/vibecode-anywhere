@@ -1,5 +1,30 @@
 # Changelog
 
+## 2.1.0 — 2026-10-15
+Security, data-safety and portability hardening from a multi-persona adversarial + edge-case + security audit.
+
+- **Eliminated config RCE (`scripts/lib.sh`).** Previously `lib.sh` ran `eval` on `hub.conf` (including the plaintext copy in `vibecode-out/` before bundle decryption), so a tampered `hub.conf` on a cloud drive or USB could execute arbitrary commands. `hub.conf` is now parsed by a strict non-`eval` parser that only accepts whitelisted scalar/array keys and rejects command substitutions (`$(...)`, backticks) and shell metacharacters. `HOST_NAME`, `NODE_VERSION`, `JAVA_VERSION` and `PROFILE` are also validated.
+- **Fixed macOS bash 3.2 rule rendering bug (`scripts/render-rules.sh`).** On bash 3.2 (`/bin/bash` on macOS), `${tpl//\{\{$1\}\}/"$2"}` inserted literal `"` characters around every substituted placeholder in `AGENTS.md`. Fixed and covered by CI under both native bash and `BASH_COMPAT=32`.
+- **save-all.sh data-loss and secret-leak fixes:**
+  - Unpushed local commits on a clean protected branch (`main`, `dev`…) or detached `HEAD` were previously skipped (`nothing to push`); they are now moved to `wip/rescue-<timestamp>` and pushed, while the local protected branch is reset to `origin/<branch>`.
+  - If `git push` fails because the remote branch diverged, `save-all.sh` automatically falls back to pushing `HEAD:refs/heads/wip/rescue-<timestamp>` without force-pushing. Local `backup/*` branches created by `sync.sh` are pushed too.
+  - Staged inspection now uses `--no-renames --diff-filter=ACMR` so renamed secrets (`git mv .env.example .env`) and modified tracked secrets are caught and unstaged without deleting tracked files.
+  - Expanded secret & AI-file filters (`.envrc`, `.dev.vars`, `.git-credentials`, `*.tfvars`, `*.tfstate*`, `kubeconfig`, `firebase-adminsdk*.json`, nested `*/.claude/*`, `*/.agents/*`, `*/ai-workspace/*`, `.cursorrules`, `.windsurfrules`, `.github/copilot-instructions.md`). Worktrees of `PUBLIC_REPOS` inherit public-repo AI-file protection.
+  - Refuses to commit during an unfinished rebase/merge or when a file exceeds 95 MB (GitHub's limit), and ignores nested `.git` directories.
+- **pack.sh hardening:**
+  - Atomic bundle write (`bundle.tar.gz.enc.tmp` → decrypt-verify with `openssl enc -d | tar -tzf -` → keep `.prev` → `mv`), so a failed pack never corrupts an existing bundle.
+  - Bundles local-only commits across **all** branches (`--branches HEAD --not --remotes`), not only `HEAD`, and skips unborn repos cleanly.
+  - Inspects `home.tar` after creation and aborts if a directory in `HOME_EXTRAS` (e.g. `.config/gh` or `.ssh`) contains credential or key files (`hosts.yml`, `id_ed25519`, `.git-credentials`…), while narrowing `--exclude` so legitimate files like `design-tokens.json` are not skipped.
+  - Refuses `PASS_FILE` inside `VIBE_OUT`, checks `config/rules.extra.md` for credentials, supports custom `core.hooksPath`, and sets `umask 077` + `COPYFILE_DISABLE=1`.
+- **sync.sh & headless resilience:**
+  - Export `GIT_TERMINAL_PROMPT=0` and `GCM_INTERACTIVE=never` so git never hangs waiting for a terminal prompt on a phone-controlled host.
+  - Concurrency lock (`~/.vibecode.lock` with stale-PID recovery) prevents simultaneous `sync.sh` / `save-all.sh` runs from corrupting worktrees.
+  - Separate `openssl enc -d` from `tar -xzf` so disk-full/corrupt-archive errors are not misreported as a wrong passphrase; fail fast when `PASS_FILE` is missing and stdin is not a TTY.
+  - If `git apply --3way` fails, roll back any conflict markers left in the working tree/index before saving the `.wip.patch`.
+  - Skip `EXTRAS` for repos whose clone/restore failed so secrets aren't dropped into an uncloned folder (which would block the next `git clone`), and strip unsafe symlinks in `place_tree`.
+  - Fixed `VIBE_SYNC_REEXEC=1 exec bash "$VA_HOME/sync.sh" "$@"` when invoked via `vibe.ps1` or `bash sync.sh`.
+- **Linux bootstrap & agent rules:** `apt-get` waits up to 120s for `dpkg` locks (`unattended-upgrades`), cleans up `/swapfile` on failure, writes `NODE_OPTIONS`/`PATH` to `~/.profile` and `~/.config/environment.d/vibecode.conf` for systemd user services, and adds prompt-injection defense rules to `templates/AGENTS.md.tpl`.
+
 ## 2.0.1 — 2026-10-15
 Security and safety fixes found in a risk review of 2.0.0.
 

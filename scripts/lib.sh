@@ -3,12 +3,17 @@
 # Runs on Linux, macOS (bash 3.2) and Windows (Git Bash / MSYS2): no associative arrays, no mapfile.
 # (c) 2026 Nguyễn Việt Thành — MIT License. https://github.com/tsennguyen/vibecode-anywhere
 
-VA_VERSION="2.0.1"
+VA_VERSION="2.1.0"
 VA_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PATH="$HOME/.local/bin:$PATH"
+# Never let git block waiting for a terminal prompt on a headless host.
+export GIT_TERMINAL_PROMPT=0
+export GCM_INTERACTIVE=never
 
 case "$(uname -s)" in
-  Linux)                VA_OS=linux ;;
+  Linux)
+    VA_OS=linux
+    [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -d "/run/user/$(id -u)" ] && export XDG_RUNTIME_DIR="/run/user/$(id -u)" ;;
   Darwin)               VA_OS=macos ;;
   MINGW*|MSYS*|CYGWIN*) VA_OS=windows
     _lad="$(cygpath -u "${LOCALAPPDATA:-}" 2>/dev/null)"; [ -n "$_lad" ] || _lad="$HOME/AppData/Local"
@@ -38,9 +43,141 @@ GIT_NAME=""; GIT_EMAIL=""; PROFILE="auto"
 AGENTS=(antigravity); STACKS=(node); NODE_VERSION="22"; JAVA_VERSION="21"; TOOLS=(gh)
 DOCKER_ON_MAC="colima"
 INSTALL_PLAYWRIGHT="auto"; DOCKER_IMAGES=()
+WINDOWS_BLOCK_AUTO_REBOOT=1; WINDOWS_SSH_SHELL="bash"
 REPOS=(); WORKTREES=(); PUBLIC_REPOS=(); PROTECTED_BRANCHES=(main master dev develop prod production)
 EXTRAS=(); HOME_EXTRAS=(); DEP_COMMANDS=(); SMOKE_TESTS=()
 VIBE_OUT="$HOME/vibecode-out"; PASS_FILE="$HOME/.vibecode-pass"
+
+# ── safe config parser (no eval: hub.conf next to the bundle is unencrypted) ─
+_expand_home() {
+  local v="$1"
+  v="${v//\$\{HOME\}/$HOME}"
+  v="${v//\$HOME/$HOME}"
+  printf '%s' "$v"
+}
+_set_scalar() {
+  local k="$1" v; v="$(_expand_home "$2")"
+  case "$k" in
+    OWNER_NAME) OWNER_NAME="$v" ;;           REPLY_LANGUAGE) REPLY_LANGUAGE="$v" ;;
+    HOST_NAME) HOST_NAME="$v" ;;             TIMEZONE) TIMEZONE="$v" ;;
+    HOST_KIND) HOST_KIND="$v" ;;             HOST_SHARED) HOST_SHARED="$v" ;;
+    SSH_SERVER) SSH_SERVER="$v" ;;           SOURCE_ROOT) SOURCE_ROOT="$v" ;;
+    HOST_ROOT) HOST_ROOT="$v" ;;             MIRROR_PATH) MIRROR_PATH="$v" ;;
+    GIT_NAME) GIT_NAME="$v" ;;               GIT_EMAIL) GIT_EMAIL="$v" ;;
+    PROFILE) PROFILE="$v" ;;                 NODE_VERSION) NODE_VERSION="$v" ;;
+    JAVA_VERSION) JAVA_VERSION="$v" ;;       DOCKER_ON_MAC) DOCKER_ON_MAC="$v" ;;
+    INSTALL_PLAYWRIGHT) INSTALL_PLAYWRIGHT="$v" ;;
+    WINDOWS_BLOCK_AUTO_REBOOT) WINDOWS_BLOCK_AUTO_REBOOT="$v" ;;
+    WINDOWS_SSH_SHELL) WINDOWS_SSH_SHELL="$v" ;;
+    VIBE_OUT) VIBE_OUT="$v" ;;               PASS_FILE) PASS_FILE="$v" ;;
+    *) die "unknown setting '$k' in $VA_CONF" ;;
+  esac
+}
+_clear_array() {
+  case "$1" in
+    AGENTS) AGENTS=() ;;                     STACKS) STACKS=() ;;
+    TOOLS) TOOLS=() ;;                       DOCKER_IMAGES) DOCKER_IMAGES=() ;;
+    REPOS) REPOS=() ;;                       WORKTREES) WORKTREES=() ;;
+    PUBLIC_REPOS) PUBLIC_REPOS=() ;;         PROTECTED_BRANCHES) PROTECTED_BRANCHES=() ;;
+    EXTRAS) EXTRAS=() ;;                     HOME_EXTRAS) HOME_EXTRAS=() ;;
+    DEP_COMMANDS) DEP_COMMANDS=() ;;         SMOKE_TESTS) SMOKE_TESTS=() ;;
+    *) die "unknown list '$1' in $VA_CONF" ;;
+  esac
+}
+_append_array() {
+  local k="$1" v; v="$(_expand_home "$2")"
+  case "$k" in
+    AGENTS) AGENTS+=("$v") ;;                STACKS) STACKS+=("$v") ;;
+    TOOLS) TOOLS+=("$v") ;;                  DOCKER_IMAGES) DOCKER_IMAGES+=("$v") ;;
+    REPOS) REPOS+=("$v") ;;                  WORKTREES) WORKTREES+=("$v") ;;
+    PUBLIC_REPOS) PUBLIC_REPOS+=("$v") ;;    PROTECTED_BRANCHES) PROTECTED_BRANCHES+=("$v") ;;
+    EXTRAS) EXTRAS+=("$v") ;;                HOME_EXTRAS) HOME_EXTRAS+=("$v") ;;
+    DEP_COMMANDS) DEP_COMMANDS+=("$v") ;;    SMOKE_TESTS) SMOKE_TESTS+=("$v") ;;
+    *) die "unknown list '$k' in $VA_CONF" ;;
+  esac
+}
+load_conf() {
+  local file="$1" op k v
+  while IFS=$'\t' read -r op k v; do
+    [ -n "$op" ] || continue
+    case "$op" in
+      S) _set_scalar "$k" "$v" ;;
+      A) _clear_array "$k" ;;
+      I) _append_array "$k" "$v" ;;
+      E) die "error in $file (line $k): $v" ;;
+    esac
+  done <<EOF
+$(awk '
+BEGIN { state = "top"; arr = "" }
+NR == 1 { sub(/^\xef\xbb\xbf/, "") }
+{
+  sub(/\r$/, "")
+  line = $0; i = 1; n = length(line)
+  while (i <= n) {
+    c = substr(line, i, 1)
+    if (c ~ /[ \t]/ || (state == "top" && c == ";")) { i++; continue }
+    if (c == "#") break
+    if (state == "top") {
+      rest = substr(line, i)
+      if (match(rest, /^[A-Za-z_][A-Za-z0-9_]*(\+=|=)/)) {
+        tok = substr(rest, 1, RLENGTH); i += RLENGTH
+        plus = ( substr(tok, length(tok)-1, 2) == "+=" )
+        key = substr(tok, 1, length(tok) - (plus ? 2 : 1))
+        while (i <= n && substr(line, i, 1) ~ /[ \t]/) i++
+        if (substr(line, i, 1) == "(") {
+          i++; state = "arr"; arr = key
+          if (!plus) printf "A\t%s\t\n", arr
+          continue
+        }
+        if (plus) { printf "E\t%d\t+= requires parentheses\n", NR; exit }
+        val = ""; ok = parse_val()
+        if (!ok) exit
+        printf "S\t%s\t%s\n", key, val
+      } else {
+        printf "E\t%d\tunexpected syntax\n", NR; exit
+      }
+    } else if (state == "arr") {
+      if (c == ")") { i++; state = "top"; arr = ""; continue }
+      val = ""; ok = parse_val()
+      if (!ok) exit
+      printf "I\t%s\t%s\n", arr, val
+    }
+  }
+}
+END { if (state == "arr") printf "E\t%d\tunclosed array %s\n", NR, arr }
+function parse_val(    q, ch, nxt) {
+  if (i > n) { val = ""; return 1 }
+  q = substr(line, i, 1)
+  if (q == "\"" || q == "\x27") {
+    i++
+    while (i <= n) {
+      ch = substr(line, i, 1)
+      if (q == "\"" && ch == "\\" && i < n) {
+        nxt = substr(line, i+1, 1)
+        if (nxt == "\"" || nxt == "\\" || nxt == "$") { val = val nxt; i += 2; continue }
+      }
+      if (ch == q) { i++; break }
+      if (q == "\"" && (ch == "`" || substr(line, i, 2) == "$(")) {
+        printf "E\t%d\tcommand substitution is not allowed in hub.conf\n", NR; return 0
+      }
+      val = val ch; i++
+    }
+    if (ch != q) { printf "E\t%d\tunclosed quote\n", NR; return 0 }
+    return 1
+  }
+  while (i <= n) {
+    ch = substr(line, i, 1)
+    if (ch ~ /[ \t;#)]/) break
+    if (ch == "`" || substr(line, i, 2) == "$(" || ch == "|" || ch == "&" || ch == ">" || ch == "<") {
+      printf "E\t%d\tunsafe unquoted character in hub.conf\n", NR; return 0
+    }
+    val = val ch; i++
+  }
+  return 1
+}
+' "$file")
+EOF
+}
 
 # ── config lookup: $VIBE_CONF, then config/hub.conf, then the copy pack.sh left next to the bundle ──
 VA_CONF=""
@@ -48,10 +185,10 @@ for _c in "${VIBE_CONF:-}" "$VA_HOME/config/hub.conf" "${VIBE_OUT}/hub.conf"; do
   if [ -n "$_c" ] && [ -f "$_c" ]; then VA_CONF="$_c"; break; fi
 done
 [ -n "$VA_CONF" ] || die "no config found. Run: cp config/hub.example.conf config/hub.conf  (then edit it, or let your AI fill it in with PROMPT.md)"
-# Tolerate configs saved by Windows editors (CRLF line endings, UTF-8 BOM).
-_conf_txt="$(tr -d '\r' < "$VA_CONF")"; _conf_txt="${_conf_txt#$'\xef\xbb\xbf'}"
-eval "$_conf_txt" || die "error in $VA_CONF (it is bash: KEY=\"value\", lists like REPOS=( \"a|b|c\" ))"
-unset _conf_txt
+load_conf "$VA_CONF"
+case "$HOST_NAME" in ''|*[!A-Za-z0-9._-]*) die "invalid HOST_NAME '$HOST_NAME' in $VA_CONF (use letters, digits, . _ -)" ;; esac
+case "$NODE_VERSION" in ''|*[!0-9]*) die "invalid NODE_VERSION '$NODE_VERSION' in $VA_CONF (digits only)" ;; esac
+case "$JAVA_VERSION" in ''|*[!0-9]*) die "invalid JAVA_VERSION '$JAVA_VERSION' in $VA_CONF (digits only)" ;; esac
 
 # ── system facts (portable) ──────────────────────────────────────────────────
 _n() { local v; v="$(cat)"; case "$v" in ''|*[!0-9]*) echo "$1" ;; *) echo "$v" ;; esac; }   # stdin → number or default
@@ -127,6 +264,7 @@ if [ "$VA_PROFILE" = auto ]; then
   elif [ "$_ram" -lt 14000 ]; then VA_PROFILE=medium
   else VA_PROFILE=large; fi
 fi
+case "$VA_PROFILE" in ''|*/*|*..*) die "invalid PROFILE '$VA_PROFILE'" ;; esac
 [ -f "$VA_HOME/profiles/$VA_PROFILE.conf" ] || die "unknown PROFILE '$VA_PROFILE' (use auto, small, medium, large or a file in profiles/)"
 # shellcheck disable=SC1090
 source "$VA_HOME/profiles/$VA_PROFILE.conf"
@@ -143,6 +281,28 @@ case "$HOST_KIND" in
 esac
 # An SSH server is how you rescue the host from the phone. VPSes ship one; home machines usually don't.
 case "$SSH_SERVER" in auto) [ "$HOST_KIND" = vps ] && WANT_SSH=0 || WANT_SSH=1 ;; 1|yes|true) WANT_SSH=1 ;; *) WANT_SSH=0 ;; esac
+
+# ── git & concurrency helpers ────────────────────────────────────────────────
+# Portable absolute --git-common-dir (works on git < 2.31 where --path-format=absolute is missing).
+git_common_dir() {
+  local repo="${1:-.}" d
+  d="$(git -C "$repo" rev-parse --git-common-dir)" || return 1
+  ( cd "$repo" && cd "$d" && pwd -P )
+}
+VA_LOCK="$HOME/.vibecode.lock"
+acquire_lock() {
+  local holder=""
+  if ! mkdir "$VA_LOCK" 2>/dev/null; then
+    [ -f "$VA_LOCK/pid" ] && holder="$(cat "$VA_LOCK/pid" 2>/dev/null || true)"
+    if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
+      die "another vibecode script (PID $holder) is currently running; wait for it or remove $VA_LOCK"
+    fi
+    rm -rf "$VA_LOCK"
+    mkdir "$VA_LOCK" 2>/dev/null || die "could not acquire lock $VA_LOCK"
+  fi
+  printf '%s\n' "$$" > "$VA_LOCK/pid"
+}
+release_lock() { rm -rf "$VA_LOCK" 2>/dev/null || true; }
 
 # ── list helpers ─────────────────────────────────────────────────────────────
 # Entries look like "a|b|c". f1/f2/f3 print one field (missing field = empty).
@@ -166,24 +326,36 @@ all_paths() {
   for e in ${WORKTREES[@]+"${WORKTREES[@]}"}; do f1 "$e"; echo; done
 }
 
-# Files that must never be committed by our scripts (checked on NEW files only).
+# Files that must never be committed by our scripts.
 is_secret_path() {
   case "$(basename "$1")" in
     .env.example|.env.sample|.env.template|.env.dist|.env.defaults) return 1 ;;
-    .env|.env.*|*.pem|*.key|*.p12|*.pfx|*.jks|*.keystore|*.kdbx|id_rsa*|id_ed25519*|id_ecdsa*|\
-    credentials.json|.credentials.json|auth.json|service-account*.json|*secret*.json|.npmrc|.pypirc|.netrc|.vibecode-pass) return 0 ;;
+    .env|.env.*|.envrc|.dev.vars|*.pem|*.key|*.p12|*.pfx|*.jks|*.keystore|*.kdbx|*.tfvars|*.tfstate|*.tfstate.*|\
+    id_rsa*|id_ed25519*|id_ecdsa*|credentials.json|.credentials.json|.git-credentials|auth.json|\
+    service-account*.json|firebase-adminsdk*.json|*secret*.json|*secrets*.json|kubeconfig|\
+    .npmrc|.pypirc|.netrc|.vibecode-pass|hosts.yml) return 0 ;;
   esac
   return 1
 }
 # AI/agent files that must not land in PUBLIC repos.
 is_ai_path() {
   case "$1" in
-    AGENTS.md|CLAUDE.md|GEMINI.md|*/AGENTS.md|*/CLAUDE.md|*/GEMINI.md|AGENTS.override.md|CLAUDE.local.md) return 0 ;;
-    .agents/*|.claude/*|.codex/*|.gemini/*|.cursor/*|.windsurf/*|ai-workspace/*|_bmad*|*/_bmad*) return 0 ;;
+    AGENTS.md|CLAUDE.md|GEMINI.md|AGENTS.override.md|CLAUDE.local.md|.cursorrules|.windsurfrules|.github/copilot-instructions.md|\
+    */AGENTS.md|*/CLAUDE.md|*/GEMINI.md|*/AGENTS.override.md|*/CLAUDE.local.md|*/.cursorrules|*/.windsurfrules) return 0 ;;
+    .agents/*|*/.agents/*|.claude/*|*/.claude/*|.codex/*|*/.codex/*|.gemini/*|*/.gemini/*|\
+    .cursor/*|*/.cursor/*|.windsurf/*|*/.windsurf/*|ai-workspace/*|*/ai-workspace/*|_bmad*|*/_bmad*) return 0 ;;
   esac
   return 1
 }
-is_public_repo() { in_list "$1" ${PUBLIC_REPOS[@]+"${PUBLIC_REPOS[@]}"}; }
+# True if $1 is in PUBLIC_REPOS, or is a worktree whose parent repo is in PUBLIC_REPOS.
+is_public_repo() {
+  in_list "$1" ${PUBLIC_REPOS[@]+"${PUBLIC_REPOS[@]}"} && return 0
+  local parent
+  if parent="$(lookup "$1" ${WORKTREES[@]+"${WORKTREES[@]}"})"; then
+    in_list "$parent" ${PUBLIC_REPOS[@]+"${PUBLIC_REPOS[@]}"} && return 0
+  fi
+  return 1
+}
 # Is "repo/path" listed in EXTRAS (or inside a listed folder)?
 is_extra_path() {
   local x="$1" e
@@ -193,10 +365,14 @@ is_extra_path() {
   return 1
 }
 
-# Never pack login tokens, whatever the config says.
+# Never pack login tokens or SSH/TLS/cloud keys from $HOME, whatever the config says.
 is_secret_login_file() {
-  case "$(basename "$1")" in
-    auth.json|.credentials.json|credentials.json|oauth*|*token*|*.pem|id_rsa*|id_ed25519*|hosts.yml) return 0 ;;
+  case "${1%/}" in
+    .ssh|.ssh/*|*/.ssh|.gnupg|.gnupg/*|*/.gnupg|.aws|.aws/*|*/.aws|.kube|.kube/*|*/.kube|.config/gh|.config/gh/*|*/.config/gh) return 0 ;;
+  esac
+  case "$(basename "${1%/}")" in
+    auth.json|.credentials.json|credentials.json|.git-credentials|oauth*|*oauth*|*auth_token*|*access_token*|*refresh_token*|\
+    *.pem|*.key|*.p12|*.pfx|id_rsa*|id_ed25519*|id_ecdsa*|hosts.yml|authorized_keys) return 0 ;;
   esac
   return 1
 }

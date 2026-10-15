@@ -1,0 +1,63 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: shellcheck (errors)
+        run: shellcheck -S error -x *.sh scripts/*.sh tests/*.sh
+      - name: bash syntax
+        run: for f in *.sh scripts/*.sh tests/*.sh; do bash -n "$f"; done
+      - name: secret / AI-file audit (whole history)
+        run: bash tests/audit.sh
+
+  e2e:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: force macOS system bash 3.2 (what users have)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p "$RUNNER_TEMP/bash32" && ln -sf /bin/bash "$RUNNER_TEMP/bash32/bash"
+          echo "$RUNNER_TEMP/bash32" >> "$GITHUB_PATH"
+      - name: versions
+        run: bash --version | head -1; git --version; openssl version
+      - name: end-to-end tests
+        run: bash tests/run.sh
+
+  powershell:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: parse every .ps1 with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $bad = 0
+          Get-ChildItem -Recurse -Filter *.ps1 | ForEach-Object {
+            $errs = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errs) | Out-Null
+            if ($errs) { $bad++; $errs | ForEach-Object { Write-Host "$($_.Extent.File):$($_.Extent.StartLineNumber) $($_.Message)" } }
+          }
+          if ($bad) { exit 1 } else { Write-Host "all .ps1 files parse" }
+      - name: vibe.ps1 runs a script through Git Bash
+        shell: powershell
+        run: |
+          Copy-Item config\hub.example.conf config\hub.conf
+          .\vibe.ps1 config
+          if ($LASTEXITCODE -ne 0) { exit 1 }

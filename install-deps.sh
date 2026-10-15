@@ -43,7 +43,7 @@ install_repo() { # $1 = path relative to HOST_ROOT
   local p="$1" d="$HOST_ROOT/$1" custom sub cmd
   [ -d "$d" ] || { echo "  SKIP  $p (missing — run ./sync.sh)"; return; }
   if custom="$(lookup "$p" ${DEP_COMMANDS[@]+"${DEP_COMMANDS[@]}"})"; then
-    run "$p: $custom" bash -c "cd '$d' && $custom"; return
+    run "$p: $custom" bash -c 'cd "$1" && eval "$2"' _ "$d" "$custom"; return
   fi
   local found=0
   for sub in "$d" "$d"/*/; do
@@ -56,7 +56,7 @@ install_repo() { # $1 = path relative to HOST_ROOT
     if [ "$sub" != "$d" ] && [ -f "$d/pnpm-workspace.yaml" ] && [ ! -f "$sub/uv.lock" ] && [ ! -x "$sub/mvnw" ]; then continue; fi
     while IFS= read -r cmd; do
       [ -n "$cmd" ] || continue; found=1
-      run "${sub#"$HOST_ROOT"/}: $cmd" bash -c "cd '$sub' && $cmd" </dev/null
+      run "${sub#"$HOST_ROOT"/}: $cmd" bash -c 'cd "$1" && eval "$2"' _ "$sub" "$cmd" </dev/null
     done <<EOF
 $(detect_one "$sub")
 EOF
@@ -77,7 +77,7 @@ if [ "$WANT_PLAYWRIGHT" = 1 ]; then
     grep -qs '"@playwright/test"\|"playwright"' "$HOST_ROOT/$(f1 "$e")/package.json" && { pw_repo="$HOST_ROOT/$(f1 "$e")"; break; }
   done
   pw_flags="--with-deps"; [ "$VA_OS" = linux ] || pw_flags=""   # system libraries only matter on Linux
-  if [ -n "$pw_repo" ]; then run "playwright chromium" bash -c "cd '$pw_repo' && npx playwright install $pw_flags chromium"
+  if [ -n "$pw_repo" ]; then run "playwright chromium" bash -c 'cd "$1" && npx playwright install $2 chromium' _ "$pw_repo" "$pw_flags"
   else echo "  --    no repo uses Playwright"; fi
 fi
 
@@ -88,7 +88,7 @@ fi
 
 if [ "${#SMOKE_TESTS[@]}" -gt 0 ]; then
   step "Smoke tests"
-  for e in "${SMOKE_TESTS[@]}"; do run "$(f1 "$e"): $(f2 "$e")" bash -c "cd '$HOST_ROOT/$(f1 "$e")' && $(f2 "$e")" </dev/null; done
+  for e in "${SMOKE_TESTS[@]}"; do run "$(f1 "$e"): $(f2 "$e")" bash -c 'cd "$1" && eval "$2"' _ "$HOST_ROOT/$(f1 "$e")" "$(f2 "$e")" </dev/null; done
 fi
 
 echo

@@ -44,7 +44,12 @@ mem_avail="$(va_mem_avail_mb)"; swap_total="$(va_swap_mb)"
   || warn "RAM available only ${mem_avail} MB (swap ${swap_total} MB) → RESCUE §3"
 ok "load $(va_load) on $(va_cpus) CPUs"
 curl -fsS -o /dev/null --max-time 8 https://github.com && ok "internet reaches github.com" || bad "no internet to github.com"
-git config --global user.email >/dev/null 2>&1 || [ -n "$GIT_EMAIL" ] && ok "git identity set" || warn "git has no user.name/email → commits will fail; set GIT_NAME/GIT_EMAIL in hub.conf and re-run sync"
+if { git config --global user.name >/dev/null 2>&1 && git config --global user.email >/dev/null 2>&1; } \
+   || { [ -n "$GIT_NAME" ] && [ -n "$GIT_EMAIL" ]; }; then
+  ok "git identity set"
+else
+  warn "git has no user.name/email → commits will fail; set GIT_NAME/GIT_EMAIL in hub.conf and re-run sync"
+fi
 if have gh; then gh auth status >/dev/null 2>&1 && ok "GitHub CLI signed in" || bad "GitHub CLI not signed in → RESCUE §6"; fi
 if wants_stack docker; then
   if have docker; then docker info >/dev/null 2>&1 && ok "docker running" || warn "docker installed but not running (Docker Desktop / colima not started?)"
@@ -66,7 +71,7 @@ check_repo() {
   local p="$1" d="$HOST_ROOT/$1"
   [ -e "$d/.git" ] || { warn "$p missing → sync.sh"; return; }
   local br dirty ahead
-  br="$(git -C "$d" branch --show-current)"
+  br="$(git -C "$d" branch --show-current)"; [ -n "$br" ] || br="detached"
   dirty="$(git -C "$d" status --porcelain | wc -l | tr -d ' ')"
   if git -C "$d" rev-parse -q --verify '@{u}' >/dev/null 2>&1; then ahead="$(git -C "$d" rev-list --count '@{u}..HEAD')"
   else ahead="$(git -C "$d" rev-list --count HEAD --not --remotes)"; fi
