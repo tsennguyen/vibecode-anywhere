@@ -2,7 +2,7 @@
 
 **Đi đâu cũng code được, chỉ cần điện thoại.** Một máy Ubuntu luôn bật (VPS thuê hoặc PC ở nhà) chạy agent lập trình (**Antigravity CLI**, **Claude Code**, **OpenAI Codex**). Bạn ra lệnh cho agent từ điện thoại. Bộ kit này chuyển nguyên trạng thái làm việc từ máy chính sang máy đó: repo đúng branch, việc chưa commit, file `.env`, cấu hình agent. Kèm theo là bộ luật để agent tự biết giữ an toàn khi chủ nhân chỉ cầm điện thoại.
 
-[English](README.en.md) · [Hướng dẫn từng agent](docs/AGENTS-GUIDE.md) · [Cứu hộ](docs/RESCUE.md) · [Prompt cho AI](PROMPT.md)
+[English](README.en.md) · [**Hướng dẫn sử dụng nhanh**](docs/HDSD.md) · [Hướng dẫn từng agent](docs/AGENTS-GUIDE.md) · [Cứu hộ](docs/RESCUE.md) · [Prompt cho AI](PROMPT.md)
 
 > Tác giả: **Nguyễn Việt Thành (Tsen)**, [github.com/tsennguyen](https://github.com/tsennguyen). Mình viết bộ này cho một chuyến đi 3 ngày mà vẫn phải làm việc gấp, trong tay chỉ có điện thoại. Giấy phép MIT: cứ dùng, sửa, chia sẻ, giữ lại dòng credit là được.
 
