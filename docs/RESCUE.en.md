@@ -52,7 +52,7 @@ pkill -f "next dev"; pkill -f "vite"; pkill -f "turbo run dev"; pkill -f playwri
 ## §4. Disk full
 ```bash
 df -h / && du -sh ~/.cache ~/code/* 2>/dev/null | sort -h | tail -8
-docker system prune -af; npm cache clean --force; pnpm store prune; rm -rf ~/.cache/pip ~/.cache/ms-playwright/*/
+docker image prune -f; docker builder prune -f; npm cache clean --force; pnpm store prune; rm -rf ~/.cache/pip ~/.cache/ms-playwright/*/
 ```
 (If you need Playwright again later, reinstall it with `install-deps.sh`.)
 
@@ -60,7 +60,7 @@ docker system prune -af; npm cache clean --force; pnpm store prune; rm -rf ~/.ca
 ```bash
 ~/vibecode-anywhere/save-all.sh
 ```
-Changes on a protected branch (`PROTECTED_BRANCHES`) move to a new `wip/rescue-<time>` branch. It never pushes straight to the main branch and never force-pushes.
+Changes or unpushed commits on a protected branch (`PROTECTED_BRANCHES`) move to a new `wip/rescue-<time>` branch. It never pushes straight to the main branch and never force-pushes.
 
 ## §6. GitHub not signed in / push rejected / Codex signed out
 ```bash

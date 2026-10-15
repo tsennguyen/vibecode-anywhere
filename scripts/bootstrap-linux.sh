@@ -11,8 +11,9 @@ source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
 
 have apt-get || die "this Linux has no apt. Supported: Ubuntu/Debian family. On Fedora/Arch install the tools by hand (docs/HOSTS.md) and run sync.sh."
 # Minimal images (Debian as root) may lack sudo; child shells below call the real binary.
-if [ "$(id -u)" -eq 0 ] && ! command -v sudo >/dev/null 2>&1; then apt-get update -y && apt-get install -y sudo; fi
+if [ "$(id -u)" -eq 0 ] && ! command -v sudo >/dev/null 2>&1; then apt-get -o DPkg::Lock::Timeout=120 update -y && apt-get -o DPkg::Lock::Timeout=120 install -y sudo; fi
 if [ "$(id -u)" -eq 0 ]; then sudo() { [ "${1:-}" = "-E" ] && shift; "$@"; }; fi
+apt_get() { sudo apt-get -o DPkg::Lock::Timeout=120 "$@"; }
 ME="$(id -un)"
 ARCH="$(dpkg --print-architecture)"
 FAILED=()
@@ -26,8 +27,8 @@ mkdir -p "$HOME/.local/bin"
 grep -q 'HOME/.local/bin' "$HOME/.bashrc" 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
 
 step "Base packages"
-sudo apt-get update -y
-sudo apt-get install -y git curl wget ca-certificates gnupg unzip zip jq build-essential openssl \
+apt_get update -y
+apt_get install -y git curl wget ca-certificates gnupg unzip zip jq build-essential openssl \
   tmux htop ripgrep fd-find python3 python3-venv dbus-user-session
 
 step "Swap ${SWAP_GB} GB (profile: $PROFILE_LABEL)"
@@ -35,6 +36,7 @@ if [ "$(free -m | awk '/Swap:/ {print $2}')" -lt 1000 ]; then
   if sudo fallocate -l "${SWAP_GB}G" /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile >/dev/null && sudo swapon /swapfile; then
     grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab >/dev/null
   else
+    sudo rm -f /swapfile 2>/dev/null || true
     warn "swap not allowed on this machine type — continuing without it"
   fi
 fi
@@ -67,7 +69,7 @@ if [ "$WANT_SSH" = 1 ]; then
   step "SSH server (your rescue line from the phone)"
   if [ "$VA_WSL" = 1 ]; then echo "  WSL2: use Windows' own OpenSSH server or Tailscale SSH instead (docs/HOSTS.md)"
   else
-    sudo apt-get install -y openssh-server && sudo systemctl enable --now ssh 2>/dev/null || sudo systemctl enable --now sshd 2>/dev/null || true
+    apt_get install -y openssh-server && sudo systemctl enable --now ssh 2>/dev/null || sudo systemctl enable --now sshd 2>/dev/null || true
     echo "  Reach it from outside your home network with Tailscale (TOOLS+=(tailscale)) — never port-forward 22."
   fi
 fi
@@ -79,7 +81,7 @@ if [ "$need_node" = 1 ]; then
   step "Node $NODE_VERSION"
   if ! node -v 2>/dev/null | grep -q "^v$NODE_VERSION"; then
     curl -fsSL "https://deb.nodesource.com/setup_${NODE_VERSION}.x" | sudo -E bash -
-    sudo apt-get install -y nodejs
+    apt_get install -y nodejs
   fi
   node -v
 fi
@@ -94,7 +96,7 @@ if wants_stack python-uv; then step "uv (Python)"; have uv || curl -LsSf https:/
 if wants_stack java; then
   step "JDK $JAVA_VERSION"
   if apt-cache show "openjdk-${JAVA_VERSION}-jdk-headless" >/dev/null 2>&1; then
-    try "jdk" sudo apt-get install -y "openjdk-${JAVA_VERSION}-jdk-headless"
+    try "jdk" apt_get install -y "openjdk-${JAVA_VERSION}-jdk-headless"
   else
     # e.g. Debian 12 ships only JDK 17 → use Eclipse Temurin's apt repository.
     echo "  openjdk-${JAVA_VERSION} not in this distro → Eclipse Temurin repository"
@@ -102,10 +104,10 @@ if wants_stack java; then
       sudo mkdir -p -m 755 /etc/apt/keyrings
       wget -qO- https://packages.adoptium.net/artifactory/api/gpg/key/public | sudo gpg --dearmor --yes -o /etc/apt/keyrings/adoptium.gpg
       echo \"deb [signed-by=/etc/apt/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb \$(. /etc/os-release; echo \$VERSION_CODENAME) main\" | sudo tee /etc/apt/sources.list.d/adoptium.list >/dev/null
-      sudo apt-get update -y && sudo apt-get install -y temurin-${JAVA_VERSION}-jdk"
+      sudo apt-get -o DPkg::Lock::Timeout=120 update -y && sudo apt-get -o DPkg::Lock::Timeout=120 install -y temurin-${JAVA_VERSION}-jdk"
   fi
 fi
-if wants_stack go; then step "Go"; have go || try "go" sudo apt-get install -y golang-go; fi
+if wants_stack go; then step "Go"; have go || try "go" apt_get install -y golang-go; fi
 if wants_stack rust; then step "Rust (rustup)"; have cargo || try "rust" bash -c 'curl -fsSL https://sh.rustup.rs | sh -s -- -y'; fi
 if wants_stack docker; then
   step "Docker + Compose"
@@ -122,7 +124,7 @@ if wants_tool gh && ! have gh; then
   sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
   echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
     | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
-  sudo apt-get update -y && sudo apt-get install -y gh
+  apt_get update -y && apt_get install -y gh
 fi
 if wants_tool vercel; then step "Vercel CLI"; have vercel || try "vercel" sudo npm install -g vercel; fi
 if wants_tool supabase && ! have supabase; then
@@ -149,13 +151,20 @@ if wants_agent codex; then
 fi
 
 step "Shell defaults for the agent (Node heap for this profile)"
-if ! grep -q '# >>> vibecode-anywhere' "$HOME/.bashrc"; then
-  cat >> "$HOME/.bashrc" <<EOF
+for _rc in "$HOME/.bashrc" "$HOME/.profile"; do
+  grep -q '# >>> vibecode-anywhere' "$_rc" 2>/dev/null && continue
+  cat >> "$_rc" <<EOF
 # >>> vibecode-anywhere
+export PATH="\$HOME/.local/bin:\$PATH"
 export NODE_OPTIONS="--max-old-space-size=$NODE_HEAP_MB"
 # <<< vibecode-anywhere
 EOF
-fi
+done
+mkdir -p "$HOME/.config/environment.d"
+cat > "$HOME/.config/environment.d/vibecode.conf" <<EOF
+PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
+NODE_OPTIONS=--max-old-space-size=$NODE_HEAP_MB
+EOF
 if [ -n "$GIT_NAME" ] && [ -n "$GIT_EMAIL" ]; then
   git config --global user.name "$GIT_NAME"; git config --global user.email "$GIT_EMAIL"
 fi

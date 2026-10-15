@@ -13,8 +13,10 @@
 #
 # (c) 2026 Nguyễn Việt Thành — MIT License.
 set -euo pipefail
+umask 077
 source "$(cd "$(dirname "$0")" && pwd)/scripts/lib.sh"
 
+acquire_lock
 ROOT="$HOST_ROOT"
 STAMP_NOW="$(date +%Y%m%d-%H%M%S)"
 BACKUP="$HOME/.vibecode-backup/$STAMP_NOW"
@@ -34,18 +36,22 @@ if [ "$CLONE_ONLY" = 0 ] && [ ! -f "$BUNDLE" ]; then
 fi
 
 STAGE="$(mktemp -d)"
-trap 'rm -rf "$STAGE"' EXIT
+trap 'rm -rf "$STAGE"; release_lock' EXIT
 
 if [ "$CLONE_ONLY" = 0 ]; then
   if [ ! -s "$PASS_FILE" ]; then
+    [ -t 0 ] || die "passphrase file $PASS_FILE not found and stdin is not a terminal"
     printf 'Bundle passphrase (paste, input hidden): '
     read -rs PASS; echo
+    [ -n "$PASS" ] || die "empty passphrase"
+    mkdir -p "$(dirname "$PASS_FILE")"
     ( umask 077; printf '%s' "$PASS" > "$PASS_FILE" )
     unset PASS
   fi
-  openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -md sha256 -pass "file:$PASS_FILE" -in "$BUNDLE" \
-    | tar -xzf - -C "$STAGE" \
+  openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -md sha256 -pass "file:$PASS_FILE" -in "$BUNDLE" -out "$STAGE/bundle.tgz" \
     || die "cannot decrypt — wrong passphrase in $PASS_FILE? Delete that file and re-run."
+  tar -xzf "$STAGE/bundle.tgz" -C "$STAGE" || die "decrypted bundle is corrupt or disk is full"
+  rm -f "$STAGE/bundle.tgz"
   echo ">> Snapshot from $(cut -d'|' -f1 "$STAGE/source") at $(cut -d'|' -f2 "$STAGE/source")"
 
   # The config INSIDE the encrypted bundle is the trusted one; the plaintext copy next to it only exists
@@ -58,8 +64,8 @@ if [ "$CLONE_ONLY" = 0 ]; then
     cp "$STAGE/config/hub.conf" "$VA_HOME/config/hub.conf"
     if [ "${VIBE_SYNC_REEXEC:-0}" != 1 ] && [ -z "${VIBE_CONF:-}" ]; then
       echo ">> Using the config from the bundle — restarting sync with it"
-      rm -rf "$STAGE"   # exec skips the EXIT trap: never leave decrypted files behind
-      VIBE_SYNC_REEXEC=1 exec "$0" "$@"
+      rm -rf "$STAGE"; release_lock   # exec skips the EXIT trap: never leave decrypted files or lock behind
+      VIBE_SYNC_REEXEC=1 exec bash "$VA_HOME/sync.sh" "$@"
     fi
   elif ! cmp -s "$STAGE/config/hub.conf" "$VA_HOME/config/hub.conf"; then
     cp "$STAGE/config/hub.conf" "$VA_HOME/config/hub.conf.from-bundle"
@@ -71,12 +77,18 @@ fi
 place_tree() { # $1 = staged dir, $2 = destination, $3 = label
   local src="$1" dst="$2" n=0 f
   while IFS= read -r f; do
+    [ -n "$f" ] || continue
     f="${f#./}"
-    if [ -f "$dst/$f" ] && ! cmp -s "$src/$f" "$dst/$f"; then
-      mkdir -p "$BACKUP/$3/$(dirname "$f")" && cp -p "$dst/$f" "$BACKUP/$3/$f" && n=$((n + 1))
+    if [ -L "$src/$f" ]; then
+      case "$(readlink "$src/$f")" in /*|*../*) rm -f "$src/$f"; continue ;; esac
     fi
+    if [ -f "$dst/$f" ] && [ ! -L "$dst/$f" ] && ! cmp -s "$src/$f" "$dst/$f"; then
+      mkdir -p -m 700 "$HOME/.vibecode-backup" "$BACKUP/$3/$(dirname "$f")"
+      cp -p "$dst/$f" "$BACKUP/$3/$f" && n=$((n + 1))
+    fi
+    [ -L "$dst/$f" ] && rm -f "$dst/$f"
   done <<EOF
-$(cd "$src" && find . -type f)
+$(cd "$src" && find . \( -type f -o -type l \))
 EOF
   cp -Rp "$src/." "$dst/"
   [ "$n" -gt 0 ] && echo "  NOTE  $n existing file(s) replaced; previous versions in $BACKUP/$3/"
@@ -104,7 +116,7 @@ restore() { # $1 = path, $2 = repo|worktree, $3 = clone url | parent path   (run
   local br head common
   br="$(cat "$s/branch")"; head="$(cat "$s/head")"
   cd "$dir"
-  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  common="$(git_common_dir .)"
   if [ -f "$s/exclude" ]; then   # merge: keep host-only lines, add the snapshot's
     mkdir -p "$common/info"; touch "$common/info/exclude"
     cat "$common/info/exclude" "$s/exclude" | awk '!seen[$0]++' > "$common/info/exclude.new"
@@ -116,7 +128,9 @@ restore() { # $1 = path, $2 = repo|worktree, $3 = clone url | parent path   (run
     echo "  NOTE  $p: local changes stashed (git stash list)"
   fi
   git fetch -q --all --prune || echo "  WARN  $p: fetch failed (offline?)"
-  if [ -f "$s/local.bundle" ]; then git fetch -q "$s/local.bundle" HEAD; fi
+  if [ -f "$s/local.bundle" ]; then
+    git fetch -q "$s/local.bundle" 'refs/heads/*:refs/remotes/bundle/*' HEAD 2>/dev/null || git fetch -q "$s/local.bundle" HEAD
+  fi
 
   if [ -n "$br" ]; then
     if git rev-parse -q --verify "refs/heads/$br" >/dev/null \
@@ -124,18 +138,26 @@ restore() { # $1 = path, $2 = repo|worktree, $3 = clone url | parent path   (run
       git branch -q -f "backup/$br-$STAMP_NOW" "refs/heads/$br"
       echo "  NOTE  $p: '$br' had other commits, saved as backup/$br-$STAMP_NOW"
     fi
-    git checkout -q -B "$br" "$head"
-    if git rev-parse -q --verify "refs/remotes/origin/$br" >/dev/null; then
-      git branch -q --set-upstream-to="origin/$br" "$br"
+    if [ "$(git branch --show-current)" != "$br" ] && git worktree list --porcelain | grep -qx "branch refs/heads/$br"; then
+      warn "$p: branch '$br' is checked out in another worktree — checking out detached at $head"
+      git checkout -q --detach "$head"
+    else
+      git checkout -q -B "$br" "$head"
+      if git rev-parse -q --verify "refs/remotes/origin/$br" >/dev/null; then
+        git branch -q --set-upstream-to="origin/$br" "$br"
+      fi
     fi
   else
     git checkout -q --detach "$head"
   fi
 
   if [ -s "$s/wip.patch" ]; then
-    if ! git apply --whitespace=nowarn "$s/wip.patch" 2>/dev/null && ! git apply --3way --whitespace=nowarn "$s/wip.patch"; then
-      mkdir -p "$BACKUP"; cp "$s/wip.patch" "$BACKUP/${p//\//__}.wip.patch"
-      echo "  WARN  $p: uncommitted changes did not apply cleanly — patch saved to $BACKUP/${p//\//__}.wip.patch"
+    if ! git apply --whitespace=nowarn "$s/wip.patch" 2>/dev/null && ! git apply --3way --whitespace=nowarn "$s/wip.patch" 2>/dev/null; then
+      git checkout -f -q -- . 2>/dev/null || true
+      git reset -q 2>/dev/null || true
+      mkdir -p -m 700 "$HOME/.vibecode-backup" "$BACKUP"
+      cp "$s/wip.patch" "$BACKUP/${p//\//__}.wip.patch"
+      echo "  WARN  $p: uncommitted changes did not apply cleanly — tree left clean, patch saved to $BACKUP/${p//\//__}.wip.patch"
     fi
   fi
   if [ -f "$s/untracked.tar" ]; then
@@ -169,6 +191,7 @@ if [ "$CLONE_ONLY" = 0 ]; then
   echo ">> Extras"
   if [ -f "$STAGE/extras.tar" ]; then
     mkdir -p "$STAGE/x-extras" && tar -xf "$STAGE/extras.tar" -C "$STAGE/x-extras"
+    for _fp in ${FAILED[@]+"${FAILED[@]}"}; do rm -rf "$STAGE/x-extras/$_fp"; done
     place_tree "$STAGE/x-extras" "$ROOT" extras && echo "  OK    secrets + local config + work folders"
   fi
   if [ -f "$STAGE/home.tar" ]; then
@@ -177,7 +200,7 @@ if [ "$CLONE_ONLY" = 0 ]; then
   fi
   if [ -f "$STAGE/config/rules.extra.md" ]; then
     [ -f "$VA_HOME/config/rules.extra.md" ] && ! cmp -s "$STAGE/config/rules.extra.md" "$VA_HOME/config/rules.extra.md" \
-      && mkdir -p "$BACKUP" && cp "$VA_HOME/config/rules.extra.md" "$BACKUP/rules.extra.md"
+      && mkdir -p -m 700 "$HOME/.vibecode-backup" "$BACKUP" && cp "$VA_HOME/config/rules.extra.md" "$BACKUP/rules.extra.md"
     cp "$STAGE/config/rules.extra.md" "$VA_HOME/config/rules.extra.md"
   fi
 fi
