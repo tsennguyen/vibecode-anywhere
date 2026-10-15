@@ -22,7 +22,7 @@ flowchart LR
 | `profiles/*.conf` | | `small` (≤4 GB), `medium` (~8 GB), `large` (≥16 GB): swap, giới hạn RAM, Playwright, Docker |
 | `pack.sh` | máy chính | Chụp trạng thái mọi repo + file gitignored → **một file mã hoá** `~/vibecode-out/bundle.tar.gz.enc` |
 | `bootstrap.sh` | host Linux / macOS, 1 lần | Cài đúng những gì config chọn (apt hoặc Homebrew), giữ máy luôn thức, bật SSH cho máy ở nhà |
-| `bootstrap.ps1` | host Windows, 1 lần (Admin) | Như trên, dùng winget; chặn Windows Update tự khởi động lại; bật OpenSSH Server |
+| `bootstrap.ps1` | host Windows, 1 lần (hỏi UAC) | Như trên, dùng winget; chặn Windows Update tự khởi động lại; bật OpenSSH Server |
 | `vibe.ps1` | Windows | Chạy mọi script từ PowerShell: `.\vibe.ps1 pack`, `sync`, `install-deps`, `remote`, `doctor`, `save-all` |
 | `sync.sh` | host | Clone repo, đưa về đúng branch + commit, áp lại việc chưa commit, trả secret về chỗ cũ, sinh luật cho agent. `--clone-only` nếu không có bundle |
 | `install-deps.sh` | host | Tự nhận lockfile (npm/pnpm/yarn/bun/uv/pip/Maven/Gradle/Go/Cargo) rồi cài; chạy smoke test |
@@ -87,13 +87,13 @@ gh auth login --web --git-protocol https && gh auth setup-git
 ./sync.sh && ./install-deps.sh
 ./remote.sh login && ./remote.sh start && ./doctor.sh
 ```
-**Host Windows:** chạy trong PowerShell **Admin**:
+**Host Windows:** dùng PowerShell **thường** (không chọn Run as administrator), đăng nhập bằng đúng tài khoản sẽ chạy agent:
 ```powershell
-winget install --id Git.Git -e
+winget install --id Git.Git -e          # xong thì mở cửa sổ PowerShell mới
 git clone https://github.com/tsennguyen/vibecode-anywhere $HOME\vibecode-anywhere; cd $HOME\vibecode-anywhere
-powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1
+powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1   # sẽ hỏi quyền Admin (UAC) một lần cho phần hệ thống
 ```
-Sau đó mở PowerShell **thường**:
+Sau đó mở PowerShell mới:
 ```powershell
 gh auth login --web --git-protocol https; gh auth setup-git
 .\vibe.ps1 sync; .\vibe.ps1 install-deps
@@ -126,6 +126,7 @@ Trên host chạy `save-all.sh`. Ở máy chính, `git fetch` rồi checkout cá
 ## Bảo mật
 - `config/hub.conf` không chứa secret và bị gitignore. Secret chỉ nằm trong bundle mã hoá (AES-256-CBC, PBKDF2 200.000 vòng, SHA-256; LibreSSL và OpenSSL 3 đọc được của nhau).
 - `pack.sh` **luôn bỏ qua** file token đăng nhập (`auth.json`, `.credentials.json`, `oauth*`, `*token*`, khoá SSH). Lên host thì đăng nhập lại.
+- `save-all.sh` **không bao giờ commit** file mới trông giống secret (`.env*`, key, credentials…) hay nằm trong `EXTRAS`; với `PUBLIC_REPOS` thì cũng không commit file AI (`AGENTS.md`, `CLAUDE.md`, `.claude/`…). `sync.sh` sao lưu mọi file sắp bị ghi đè vào `~/.vibecode-backup/`.
 - Ai có link phiên remote control là điều khiển được phiên đó. Bật xác thực hai lớp cho tài khoản Google / Claude / ChatGPT.
 - Máy ở nhà: SSH bằng key, đi qua Tailscale, **không mở cổng** trên modem. Tự đăng nhập đồng nghĩa ai cầm được máy là dùng được máy, nên để máy ở nơi an toàn.
 

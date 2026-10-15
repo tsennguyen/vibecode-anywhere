@@ -3,7 +3,7 @@
 # Runs on Linux, macOS (bash 3.2) and Windows (Git Bash / MSYS2): no associative arrays, no mapfile.
 # (c) 2026 Nguyễn Việt Thành — MIT License. https://github.com/tsennguyen/vibecode-anywhere
 
-VA_VERSION="2.0.0"
+VA_VERSION="2.0.1"
 VA_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PATH="$HOME/.local/bin:$PATH"
 
@@ -48,24 +48,30 @@ for _c in "${VIBE_CONF:-}" "$VA_HOME/config/hub.conf" "${VIBE_OUT}/hub.conf"; do
   if [ -n "$_c" ] && [ -f "$_c" ]; then VA_CONF="$_c"; break; fi
 done
 [ -n "$VA_CONF" ] || die "no config found. Run: cp config/hub.example.conf config/hub.conf  (then edit it, or let your AI fill it in with PROMPT.md)"
-# shellcheck disable=SC1090
-source "$VA_CONF"
+# Tolerate configs saved by Windows editors (CRLF line endings, UTF-8 BOM).
+_conf_txt="$(tr -d '\r' < "$VA_CONF")"; _conf_txt="${_conf_txt#$'\xef\xbb\xbf'}"
+eval "$_conf_txt" || die "error in $VA_CONF (it is bash: KEY=\"value\", lists like REPOS=( \"a|b|c\" ))"
+unset _conf_txt
 
 # ── system facts (portable) ──────────────────────────────────────────────────
+_n() { local v; v="$(cat)"; case "$v" in ''|*[!0-9]*) echo "$1" ;; *) echo "$v" ;; esac; }   # stdin → number or default
 meminfo() { awk -v k="$1" '$1==k":" {print int($2/1024); exit}' /proc/meminfo 2>/dev/null; }
-va_ram_mb() {
+va_ram_mb() { _va_ram_mb 2>/dev/null | _n 8192; }
+va_mem_avail_mb() { _va_mem_avail_mb 2>/dev/null | _n 0; }
+va_swap_mb() { _va_swap_mb 2>/dev/null | _n 0; }
+_va_ram_mb() {
   case "$VA_OS" in
     macos) echo $(( $(sysctl -n hw.memsize) / 1048576 )) ;;
     *)     local m; m="$(meminfo MemTotal)"; echo "${m:-8192}" ;;
   esac
 }
-va_mem_avail_mb() {
+_va_mem_avail_mb() {
   case "$VA_OS" in
     macos) vm_stat | awk -v ps="$(sysctl -n hw.pagesize)" '/Pages free|Pages inactive|Pages speculative/ {gsub("\\.","",$NF); s+=$NF} END {print int(s*ps/1048576)}' ;;
     *)     local m; m="$(meminfo MemAvailable)"; [ -n "$m" ] || m="$(meminfo MemFree)"; echo "${m:-0}" ;;
   esac
 }
-va_swap_mb() {
+_va_swap_mb() {
   case "$VA_OS" in
     macos) sysctl -n vm.swapusage | awk '{gsub("M","",$3); print int($3)}' ;;
     *)     local m; m="$(meminfo SwapTotal)"; echo "${m:-0}" ;;
@@ -110,6 +116,7 @@ va_os_label() {
     windows) ps1 "(Get-CimInstance Win32_OperatingSystem).Caption" 2>/dev/null || echo Windows ;;
     *)       uname -s ;;
   esac
+  return 0
 }
 
 # ── profile ──────────────────────────────────────────────────────────────────
@@ -157,6 +164,33 @@ all_paths() {
   local e
   for e in ${REPOS[@]+"${REPOS[@]}"}; do f1 "$e"; echo; done
   for e in ${WORKTREES[@]+"${WORKTREES[@]}"}; do f1 "$e"; echo; done
+}
+
+# Files that must never be committed by our scripts (checked on NEW files only).
+is_secret_path() {
+  case "$(basename "$1")" in
+    .env.example|.env.sample|.env.template|.env.dist|.env.defaults) return 1 ;;
+    .env|.env.*|*.pem|*.key|*.p12|*.pfx|*.jks|*.keystore|*.kdbx|id_rsa*|id_ed25519*|id_ecdsa*|\
+    credentials.json|.credentials.json|auth.json|service-account*.json|*secret*.json|.npmrc|.pypirc|.netrc|.vibecode-pass) return 0 ;;
+  esac
+  return 1
+}
+# AI/agent files that must not land in PUBLIC repos.
+is_ai_path() {
+  case "$1" in
+    AGENTS.md|CLAUDE.md|GEMINI.md|*/AGENTS.md|*/CLAUDE.md|*/GEMINI.md|AGENTS.override.md|CLAUDE.local.md) return 0 ;;
+    .agents/*|.claude/*|.codex/*|.gemini/*|.cursor/*|.windsurf/*|ai-workspace/*|_bmad*|*/_bmad*) return 0 ;;
+  esac
+  return 1
+}
+is_public_repo() { in_list "$1" ${PUBLIC_REPOS[@]+"${PUBLIC_REPOS[@]}"}; }
+# Is "repo/path" listed in EXTRAS (or inside a listed folder)?
+is_extra_path() {
+  local x="$1" e
+  for e in ${EXTRAS[@]+"${EXTRAS[@]}"}; do
+    case "$x" in "$e"|"$e"/*) return 0 ;; esac
+  done
+  return 1
 }
 
 # Never pack login tokens, whatever the config says.

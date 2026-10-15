@@ -51,14 +51,14 @@ gh auth login --web --git-protocol https && gh auth setup-git
 ./remote.sh login && ./remote.sh start && ./doctor.sh
 ```
 
-**Windows (máy trạm, mini PC, laptop):** mở PowerShell **Run as Administrator**:
+**Windows (máy trạm, mini PC, laptop):** mở PowerShell **thường** (không chọn Run as administrator), đăng nhập bằng đúng tài khoản sẽ chạy agent:
 ```powershell
-winget install --id Git.Git -e
+winget install --id Git.Git -e          # xong thì mở cửa sổ PowerShell mới
 git clone https://github.com/tsennguyen/vibecode-anywhere $HOME\vibecode-anywhere
 cd $HOME\vibecode-anywhere
-powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1
+powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1   # hỏi quyền Admin (UAC) một lần
 ```
-Mở PowerShell **thường**, rồi chạy:
+Mở PowerShell mới, rồi chạy:
 ```powershell
 cd $HOME\vibecode-anywhere
 gh auth login --web --git-protocol https; gh auth setup-git

@@ -23,6 +23,10 @@ ROOT="$SOURCE_ROOT"; [ -d "$ROOT" ] || ROOT="$HOST_ROOT"
 have openssl || die "openssl not found (macOS/Linux ship it; on Windows run this inside Git Bash)"
 OUT="$VIBE_OUT/bundle.tar.gz.enc"
 
+# hub.conf travels UNENCRYPTED next to the bundle: refuse anything that looks like a credential in it.
+_hits="$(grep -nE '://[^/@[:space:]"]+:[^/@[:space:]"]+@|://(ghp_|gho_|github_pat_|glpat-)[^@"]*@|ghp_[A-Za-z0-9]{20}|github_pat_[A-Za-z0-9_]{20}|glpat-[A-Za-z0-9_-]{16}|sk-[A-Za-z0-9_-]{20}|AKIA[0-9A-Z]{16}|xox[abp]-[A-Za-z0-9-]{10}|-----BEGIN [A-Z ]*PRIVATE KEY' "$VA_CONF" | cut -d: -f1 | tr '\n' ' ' || true)"
+[ -z "$_hits" ] || die "$VA_CONF looks like it contains a credential (line(s): $_hits). hub.conf is NOT encrypted — remove it; use 'gh auth login' on the host and put secret files in EXTRAS instead."
+
 if [ ! -s "$PASS_FILE" ]; then
   ( umask 077; openssl rand -base64 30 | tr -d '\n' > "$PASS_FILE" )
   echo ">> Created a new passphrase in $PASS_FILE — the host needs the same one. Save it on your phone."
@@ -60,7 +64,8 @@ snapshot() { # $1 = path relative to ROOT
     local n_untracked=0
     if [ -s "$out/untracked.list" ]; then
       n_untracked="$(tr -cd '\0' < "$out/untracked.list" | wc -c | tr -d ' ')"
-      tar --null -T "$out/untracked.list" -cf "$out/untracked.tar"
+      tar --exclude node_modules --exclude .venv --exclude .next --exclude __pycache__ \
+        --null -T "$out/untracked.list" -cf "$out/untracked.tar"
     fi
     rm -f "$out/untracked.list"
     printf '  OK    %-50s [%s] local-commits=%s changed=%s untracked=%s\n' \
@@ -108,5 +113,6 @@ tar -czf - -C "$STAGE" . \
 
 SIZE_KB=$(( $(wc -c < "$OUT") / 1024 ))
 echo ">> Wrote $OUT (${SIZE_KB} KB) + hub.conf"
+[ "$SIZE_KB" -lt 512000 ] || warn "bundle is over 500 MB — an EXTRAS folder or untracked build output is probably too big (check node_modules/dist/.gitignore)"
 echo ">> Next: copy the folder $VIBE_OUT to the host (scp) AND to a private cloud drive as backup."
 echo ">> Keep the passphrase ($PASS_FILE) on your phone (password manager / notes), NOT in that folder."

@@ -1,6 +1,7 @@
 # Your personal config and generated files never go to GitHub.
 config/hub.conf
 config/rules.extra.md
+config/*.from-bundle
 .rendered/
 vibecode-out/
 *.enc

@@ -10,6 +10,8 @@ set -euo pipefail
 source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
 
 have apt-get || die "this Linux has no apt. Supported: Ubuntu/Debian family. On Fedora/Arch install the tools by hand (docs/HOSTS.md) and run sync.sh."
+# Minimal images (Debian as root) may lack sudo; child shells below call the real binary.
+if [ "$(id -u)" -eq 0 ] && ! command -v sudo >/dev/null 2>&1; then apt-get update -y && apt-get install -y sudo; fi
 if [ "$(id -u)" -eq 0 ]; then sudo() { [ "${1:-}" = "-E" ] && shift; "$@"; }; fi
 ME="$(id -un)"
 ARCH="$(dpkg --print-architecture)"
@@ -91,7 +93,17 @@ if wants_stack bun; then step "Bun"; have bun || try "bun" bash -c 'curl -fsSL h
 if wants_stack python-uv; then step "uv (Python)"; have uv || curl -LsSf https://astral.sh/uv/install.sh | sh; uv --version || true; fi
 if wants_stack java; then
   step "JDK $JAVA_VERSION"
-  try "jdk" sudo apt-get install -y "openjdk-${JAVA_VERSION}-jdk-headless"
+  if apt-cache show "openjdk-${JAVA_VERSION}-jdk-headless" >/dev/null 2>&1; then
+    try "jdk" sudo apt-get install -y "openjdk-${JAVA_VERSION}-jdk-headless"
+  else
+    # e.g. Debian 12 ships only JDK 17 → use Eclipse Temurin's apt repository.
+    echo "  openjdk-${JAVA_VERSION} not in this distro → Eclipse Temurin repository"
+    try "jdk (temurin)" bash -c "set -e
+      sudo mkdir -p -m 755 /etc/apt/keyrings
+      wget -qO- https://packages.adoptium.net/artifactory/api/gpg/key/public | sudo gpg --dearmor --yes -o /etc/apt/keyrings/adoptium.gpg
+      echo \"deb [signed-by=/etc/apt/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb \$(. /etc/os-release; echo \$VERSION_CODENAME) main\" | sudo tee /etc/apt/sources.list.d/adoptium.list >/dev/null
+      sudo apt-get update -y && sudo apt-get install -y temurin-${JAVA_VERSION}-jdk"
+  fi
 fi
 if wants_stack go; then step "Go"; have go || try "go" sudo apt-get install -y golang-go; fi
 if wants_stack rust; then step "Rust (rustup)"; have cargo || try "rust" bash -c 'curl -fsSL https://sh.rustup.rs | sh -s -- -y'; fi
